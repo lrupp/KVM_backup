@@ -39,7 +39,7 @@ If you want to restore the backup, just have a look in the (sub-)directory of yo
 
 or
 
-  virsh create --console $backupdir/$machine.xmo
+  virsh create --console $backupdir/$machine.xml
   
 # AUTHORS
 This script was written by Lars Vogdt <lars@linux-schulserver.de> for own purposes, but maybe used by others.
