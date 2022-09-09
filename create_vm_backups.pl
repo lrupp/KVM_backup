@@ -91,7 +91,11 @@ sub read_config($){
 	for my $key (@keys) {
 		if ( defined( $cfg->{'_DATA'}{'default'}{$key}[0] )){
 			$config{$key}=$cfg->{'_DATA'}{'default'}{$key}[0];
-		} 
+		}
+	}
+	# exclude_disk holds more than one value: get the complete array
+	if ( defined( $cfg->{'_DATA'}{'default'}{'exclude_disk'})){
+		$config{'exclude_disk'}=$cfg->{'_DATA'}{'default'}{'exclude_disk'};
 	}
 	return(%config);
 }
@@ -165,6 +169,8 @@ if ($verbose){
 logfile('open',\%conf);
 my $date=strftime "%Y-%m-%d", localtime;
 my $fullbackupdir="$backupdir/$date";
+use Data::Dumper;
+print Data::Dumper->Dump([$conf{'exclude_disk'}]);
 
 foreach my $vm (keys %machines){
 	LOG("Creating backup directory: $fullbackupdir/$vm",2);
@@ -172,14 +178,27 @@ foreach my $vm (keys %machines){
 	LOG("Dumping XML data for machine $vm",3);
 	`virsh dumpxml $vm > $fullbackupdir/$vm/$vm.xml`;
 	foreach my $blockid (keys(%{$machines{$vm}->{'blockids'}})){
-		LOG("Creating LVM snapshot for $blockid",3);
-		LOG("lvcreate -s -L 2G -n $vm-snap $machines{$vm}{'blockids'}->{$blockid}",4);
-		`lvcreate -s -L 2G -n $vm-snap $machines{$vm}{'blockids'}->{$blockid}`;
+		my $lvname=$machines{$vm}{'blockids'}{$blockid};
+		if ( my ($matched) = grep $_ eq $lvname, @{ $conf{'exclude_disk'} }){
+			LOG("Skipping $lvname, as it is excluded via exclude_disk parameter in $config");
+			next;
+		}
+		LOG("Creating LVM snapshot for $vm - $blockid",3);
+		LOG("lvcreate -s -L 2G -n $vm-snap $lvname",4);
+		my $snapshotname="${vm}-snap-${blockid}";
+		`lvcreate -s -L 2G -n $snapshotname $lvname`;
 		LOG("Creating backup image in $fullbackupdir/$vm/$blockid.img",4);
-		`cat $machines{$vm}{'blockids'}->{$blockid} > $fullbackupdir/$vm/$blockid.img`;
-		my ($foo,$dev,$lvname,$part)=split(/\//,$machines{$vm}{'blockids'}->{$blockid});
+		my ($foo,$dev,$vgname,$part)=split(/\//,$lvname);
+		if ( -x '/usr/bin/xz'){
+##			`cat $machines{$vm}{'blockids'}->{$blockid} > $fullbackupdir/$vm/$blockid.img`;
+			`dd status=none if=/$dev/$vgname/$vm-snap-$blockid | xz > $fullbackupdir/$vm/$blockid.img.xz`;
+		}
+		else {
+			LOG "xz not found - could not compress the image\n";
+			`cat /$dev/$vgname/$snapshotname > $fullbackupdir/$vm/$blockid.img`;
+		}
 		LOG("Removing LVM snapshot",4);
-		`lvremove -f /$dev/$lvname/$vm-snap`;
+		`lvremove -f /$dev/$vgname/$snapshotname`;
 	}
 }
 logfile('close',\%conf);
